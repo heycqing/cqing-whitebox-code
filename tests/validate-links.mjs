@@ -3,13 +3,17 @@
 /**
  * tests/validate-links.mjs
  * 
- * 校验仓库内所有文档与工程配置的完整性与可移植性：
+ * 校验仓库内所有文档与工程配置的完整性、可移植性与契约一致性：
  * 1. 【可移植性检查】：严禁在仓库任何 Markdown 文档中使用本机绝对路径或 file:/// 协议链接
- * 2. 【相对链接有效性】：所有相对链接指向的目标文件必须真实存在
+ * 2. 【相对链接有效性】：所有相对链接指向的目标文件必须在本地仓库真实存在
  * 3. 【规则 ID 引用一致性】：所有引用的规则 ID (如 W01 - W13) 必须在 rules.json 中定义
- * 4. 【JSON Schema 完整性】：rules.json 与 profiles/manifest.json 中声明的 $schema 必须真实存在且为有效 JSON
+ * 4. 【JSON Schema 文件与结构约束】：
+ *    - rules.json 与 profiles/manifest.json 声明的 $schema 文件必须存在且为有效 JSON
+ *    - 对 rules.json 与 manifest.json 执行具体的 Schema 属性与结构规则约束验证
  * 5. 【Manifest 路径真实性】：manifest.json 中声明的所有文件在本地仓库必须真实存在
- * 6. 【Profile 与 Manifest 一致性】：profiles/*.md 必须与 manifest.json 声明的语言/框架组合及加载清单严格对齐
+ * 6. 【Profile 与 Manifest 精准路径对齐】：
+ *    - profiles/*.md 必须按完整仓库相对路径（非 basename 混淆）链接 manifest 声明的全部文件
+ *    - 防范同名 README.md 错指与漏指
  */
 
 import fs from "node:fs";
@@ -23,7 +27,7 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const RULES_PATH = path.join(REPO_ROOT, "rules.json");
 const MANIFEST_PATH = path.join(REPO_ROOT, "profiles", "manifest.json");
 
-function getAllMarkdownFiles(dir) {
+export function getAllMarkdownFiles(dir) {
   let results = [];
   const list = fs.readdirSync(dir);
   for (const item of list) {
@@ -37,6 +41,103 @@ function getAllMarkdownFiles(dir) {
     }
   }
   return results;
+}
+
+/**
+ * 从 Markdown 文本中提取所有相对链接，并解析为相对于 repoRoot 的统一规范路径 (posix 风格)
+ */
+export function extractLinkedRepoPaths(markdownContent, markdownFilePath, repoRoot) {
+  const fileDir = path.dirname(markdownFilePath);
+  const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  const linkedPaths = new Set();
+
+  let match;
+  while ((match = linkRegex.exec(markdownContent)) !== null) {
+    const rawTarget = match[2].trim().split("#")[0];
+    if (
+      !rawTarget ||
+      rawTarget.startsWith("http://") ||
+      rawTarget.startsWith("https://") ||
+      rawTarget.startsWith("mailto:")
+    ) {
+      continue;
+    }
+
+    // 相对文件目录解析为绝对路径，再转换为相对于仓库根目录的路径
+    const fullTarget = path.resolve(fileDir, rawTarget);
+    const relToRepo = path.relative(repoRoot, fullTarget).replace(/\\/g, "/");
+    linkedPaths.add(relToRepo);
+  }
+
+  return linkedPaths;
+}
+
+/**
+ * 校验 Profile Markdown 的链接是否精准覆盖 manifest 要求的完整路径
+ */
+export function verifyProfileContentAgainstManifest(markdownContent, markdownFilePath, requiredFiles, repoRoot) {
+  const linkedPaths = extractLinkedRepoPaths(markdownContent, markdownFilePath, repoRoot);
+  const missingFiles = [];
+
+  for (const reqFile of requiredFiles) {
+    const normalizedReq = reqFile.replace(/\\/g, "/");
+    if (!linkedPaths.has(normalizedReq)) {
+      missingFiles.push(normalizedReq);
+    }
+  }
+
+  return {
+    valid: missingFiles.length === 0,
+    missingFiles,
+    linkedPaths
+  };
+}
+
+/**
+ * rules.json 结构与模式约束检查器
+ */
+export function validateRulesStructure(data) {
+  const errors = [];
+  if (!data || typeof data !== "object") errors.push("Root must be an object");
+  if (!/^\d+\.\d+\.\d+$/.test(data.version || "")) errors.push("Invalid version format");
+  if (!data.description || typeof data.description !== "string") errors.push("Missing description");
+  if (!Array.isArray(data.rules) || data.rules.length === 0) errors.push("rules must be a non-empty array");
+
+  for (const r of data.rules || []) {
+    if (!/^W\d{2,}$/.test(r.id || "")) errors.push(`Rule ${r.id}: invalid ID format`);
+    if (!["P0", "P1", "P2"].includes(r.level)) errors.push(`Rule ${r.id}: invalid level ${r.level}`);
+    for (const f of ["title", "intent", "trigger", "evidence", "exceptions", "remediation"]) {
+      if (!r[f] || typeof r[f] !== "string") errors.push(`Rule ${r.id}: missing string field ${f}`);
+    }
+    if (!Array.isArray(r.appliesTo) || r.appliesTo.length === 0) errors.push(`Rule ${r.id}: invalid appliesTo`);
+  }
+  return errors;
+}
+
+/**
+ * manifest.json 结构与模式约束检查器
+ */
+export function validateManifestStructure(data) {
+  const errors = [];
+  if (!data || typeof data !== "object") errors.push("Root must be an object");
+  if (!/^\d+\.\d+\.\d+$/.test(data.version || "")) errors.push("Invalid version format");
+  if (!data.common || typeof data.common !== "object") errors.push("Missing common object");
+  for (const key of ["entry", "foundations", "patterns", "antiPatterns", "review"]) {
+    if (!Array.isArray(data.common?.[key])) errors.push(`common.${key} must be an array`);
+  }
+  if (!data.languages || typeof data.languages !== "object") errors.push("Missing languages object");
+  for (const [lang, cfg] of Object.entries(data.languages || {})) {
+    if (!cfg.displayName) errors.push(`language ${lang} missing displayName`);
+    if (!Array.isArray(cfg.files) || cfg.files.length === 0) errors.push(`language ${lang} missing files`);
+    if (!Array.isArray(cfg.compatibleFrameworks)) errors.push(`language ${lang} missing compatibleFrameworks`);
+  }
+  if (!data.frameworks || typeof data.frameworks !== "object") errors.push("Missing frameworks object");
+  for (const [fw, cfg] of Object.entries(data.frameworks || {})) {
+    if (!cfg.displayName) errors.push(`framework ${fw} missing displayName`);
+    if (!Array.isArray(cfg.files) || cfg.files.length === 0) errors.push(`framework ${fw} missing files`);
+    if (!Array.isArray(cfg.supportedLanguages) || cfg.supportedLanguages.length === 0) errors.push(`framework ${fw} missing supportedLanguages`);
+  }
+  return errors;
 }
 
 function runValidation() {
@@ -56,32 +157,47 @@ function runValidation() {
   console.log(`[validate-links] Loaded ${validRuleIds.size} valid rule IDs: [${Array.from(validRuleIds).join(", ")}]`);
 
   // ----------------------------------------------------
-  // 2. 验证 JSON $schema 完整性 (rules.json & manifest.json)
+  // 2. 验证 JSON $schema 文件解析与结构约束验证
   // ----------------------------------------------------
-  console.log("[validate-links] Verifying JSON $schema integrity...");
-  const jsonFilesToCheck = [RULES_PATH, MANIFEST_PATH];
-  for (const jsonFilePath of jsonFilesToCheck) {
-    const relJson = path.relative(REPO_ROOT, jsonFilePath).replace(/\\/g, "/");
-    if (!fs.existsSync(jsonFilePath)) {
+  console.log("[validate-links] Validating JSON schema structure and constraints for rules.json and manifest.json...");
+  const jsonFilesToCheck = [
+    { file: RULES_PATH, validator: validateRulesStructure, name: "rules.json" },
+    { file: MANIFEST_PATH, validator: validateManifestStructure, name: "profiles/manifest.json" }
+  ];
+
+  for (const item of jsonFilesToCheck) {
+    const relJson = path.relative(REPO_ROOT, item.file).replace(/\\/g, "/");
+    if (!fs.existsSync(item.file)) {
       console.error(`❌ JSON file not found: ${relJson}`);
       errorCount++;
       continue;
     }
-    const data = JSON.parse(fs.readFileSync(jsonFilePath, "utf-8"));
+    const data = JSON.parse(fs.readFileSync(item.file, "utf-8"));
     if (data.$schema) {
-      const schemaPath = path.resolve(path.dirname(jsonFilePath), data.$schema);
+      const schemaPath = path.resolve(path.dirname(item.file), data.$schema);
       if (!fs.existsSync(schemaPath)) {
         console.error(`❌ Declared $schema file missing in ${relJson}: '${data.$schema}' (resolved to: ${schemaPath})`);
         errorCount++;
       } else {
         try {
           JSON.parse(fs.readFileSync(schemaPath, "utf-8"));
-          console.log(`  ✓ Schema valid: ${relJson} -> ${data.$schema}`);
+          console.log(`  ✓ Schema file exists and valid JSON: ${relJson} -> ${data.$schema}`);
         } catch (err) {
           console.error(`❌ Invalid JSON in schema file ${schemaPath}: ${err.message}`);
           errorCount++;
         }
       }
+    }
+
+    // 运行结构性契约验证
+    const structErrors = item.validator(data);
+    if (structErrors.length > 0) {
+      for (const err of structErrors) {
+        console.error(`❌ Structural schema violation in ${item.name}: ${err}`);
+      }
+      errorCount += structErrors.length;
+    } else {
+      console.log(`  ✓ Structural schema constraints passed: ${item.name}`);
     }
   }
 
@@ -121,14 +237,13 @@ function runValidation() {
   console.log(`  ✓ Manifest declares ${manifestDeclaredFiles.size} distinct files across all configurations.`);
 
   // ----------------------------------------------------
-  // 4. 验证 profiles/*.md 与 manifest 一致性
+  // 4. 验证 profiles/*.md 与 manifest 精准相对路径一致性 (消除同名 basename 混淆)
   // ----------------------------------------------------
-  console.log("[validate-links] Verifying consistency between profiles/*.md and manifest.json...");
+  console.log("[validate-links] Verifying exact repository-relative path consistency between profiles/*.md and manifest.json...");
   const profilesDir = path.join(REPO_ROOT, "profiles");
   const profileMds = fs.readdirSync(profilesDir).filter((f) => f.endsWith(".md"));
 
   for (const pFile of profileMds) {
-    // profile 文件名形如：typescript-react.md, javascript-vue.md
     const baseName = pFile.replace(/\.md$/, "");
     const parts = baseName.split("-");
     const lang = parts[0];
@@ -155,8 +270,10 @@ function runValidation() {
       }
     }
 
-    // 检查 profile 文档内引用的文件是否完整覆盖 manifest 该组合声明的文件
-    const profileContent = fs.readFileSync(path.join(profilesDir, pFile), "utf-8");
+    const fullProfilePath = path.join(profilesDir, pFile);
+    const profileContent = fs.readFileSync(fullProfilePath, "utf-8");
+
+    // 组装 manifest 为当前组合要求的所有精准路径
     const requiredFiles = [
       ...(manifest.common?.entry || []),
       ...(manifest.common?.foundations || []),
@@ -167,20 +284,22 @@ function runValidation() {
       ...(manifest.common?.review || [])
     ];
 
-    for (const reqFile of requiredFiles) {
-      const baseReq = path.basename(reqFile);
-      if (!profileContent.includes(baseReq)) {
-        console.error(`❌ Profile ${pFile} is missing reference to required file: '${reqFile}'`);
-        errorCount++;
+    // 精准比对：按相对于 REPO_ROOT 的规范路径进行比较，彻底解决同名 README.md 混淆
+    const checkResult = verifyProfileContentAgainstManifest(profileContent, fullProfilePath, requiredFiles, REPO_ROOT);
+    if (!checkResult.valid) {
+      for (const missing of checkResult.missingFiles) {
+        console.error(`❌ Profile ${pFile} is missing exact path link to required file: '${missing}'`);
       }
+      errorCount += checkResult.missingFiles.length;
+    } else {
+      console.log(`  ✓ Exact path consistency verified: ${pFile} (${requiredFiles.length} required paths linked)`);
     }
-    console.log(`  ✓ Profile consistency verified: ${pFile}`);
   }
 
   // ----------------------------------------------------
   // 5. 扫描所有 Markdown 文档的链接、可移植性与规则 ID 引用
   // ----------------------------------------------------
-  console.log("[validate-links] Scanning Markdown files for portability, links, and rule references...");
+  console.log("[validate-links] Scanning Markdown files for portability, relative links, and rule references...");
   const mdFiles = getAllMarkdownFiles(REPO_ROOT);
   console.log(`[validate-links] Found ${mdFiles.length} Markdown files to scan.`);
 
@@ -246,11 +365,14 @@ function runValidation() {
   }
 
   if (errorCount > 0) {
-    console.error(`\n❌ Link, portability, and manifest validation failed with ${errorCount} error(s).`);
+    console.error(`\n❌ Validation failed with ${errorCount} error(s).`);
     process.exit(1);
   }
 
-  console.log(`✅ All ${mdFiles.length} Markdown files & manifest configurations verified successfully!`);
+  console.log(`✅ All ${mdFiles.length} Markdown files, schema constraints, and manifest configurations verified successfully!`);
 }
 
-runValidation();
+// CLI 执行入口
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename)) {
+  runValidation();
+}

@@ -38,10 +38,10 @@ export function useNotifications() {
 }
 ```
 
-### ✅ 正例 (白盒：联合状态机 + 只读暴露)
+### ✅ 正例 (白盒：联合状态机 + 显式依赖注入 + 错误现场保留)
 
 ```typescript
-// ✅ 正确示范：使用联合状态机建模，只读暴露，状态转移闭环
+// ✅ 正确示范：使用联合状态机建模，显式注入获取函数，技术错误现场单点保留，UI 呈现安全文案
 import { ref, readonly } from "vue";
 
 export interface NotificationItem {
@@ -50,20 +50,27 @@ export interface NotificationItem {
   readonly createdAt: string;
 }
 
+// 显式声明数据获取契约与日志函数，避免调用未声明全局符号
+export type NotificationFetcher = () => Promise<readonly NotificationItem[]>;
+export type NotificationLogger = (err: unknown, errorId: string) => void;
+
 export type NotificationState =
   | { readonly kind: "idle" }
   | { readonly kind: "loading" }
   | { readonly kind: "empty" }
   | { readonly kind: "success"; readonly items: readonly NotificationItem[] }
-  | { readonly kind: "error"; readonly message: string };
+  | { readonly kind: "error"; readonly errorId: string; readonly userMessage: string };
 
-export function useNotifications() {
+export function useNotifications(
+  fetchNotificationsApi: NotificationFetcher,
+  logger?: NotificationLogger
+) {
   const _state = ref<NotificationState>({ kind: "idle" });
 
   async function fetchNotifications(): Promise<void> {
     _state.value = { kind: "loading" };
     try {
-      const data = await api.getNotifications();
+      const data = await fetchNotificationsApi();
       if (!Array.isArray(data) || data.length === 0) {
         _state.value = { kind: "empty" };
       } else {
@@ -73,9 +80,20 @@ export function useNotifications() {
         };
       }
     } catch (err: unknown) {
+      const errorId = crypto.randomUUID();
+
+      // 【处置边界单点记录】：记录原始技术异常因果与调用堆栈，防止无声丢失 (W01, W07)
+      if (logger) {
+        logger(err, errorId);
+      } else {
+        console.error(`[useNotifications] Fetch notifications failed (trace: ${errorId}):`, err);
+      }
+
+      // 【安全文案展示】：UI 仅展示友好提示与排查追踪码，严禁直接把未经脱敏的 err.message 暴露给用户 (W11)
       _state.value = {
         kind: "error",
-        message: err instanceof Error ? err.message : "获取通知失败，请稍后重试"
+        errorId,
+        userMessage: "通知列表暂时无法加载，请检查网络或稍后重试"
       };
     }
   }

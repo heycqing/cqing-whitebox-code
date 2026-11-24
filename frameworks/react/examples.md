@@ -138,6 +138,7 @@ export interface TelemetryErrorReport {
   readonly name: string;
   readonly message: string;
   readonly stack?: string;
+  readonly cause?: unknown;
   readonly componentStack?: string | null;
 }
 
@@ -151,33 +152,41 @@ export interface SafeModuleBoundaryProps {
 
 interface State {
   readonly hasError: boolean;
+  readonly error: Error | null;
   readonly errorId: string | null;
 }
 
 export class SafeModuleBoundary extends Component<SafeModuleBoundaryProps, State> {
   public override state: State = {
     hasError: false,
+    error: null,
     errorId: null
   };
 
-  public static getDerivedStateFromError(): Partial<State> {
-    return { hasError: true, errorId: crypto.randomUUID() };
+  public static getDerivedStateFromError(error: Error): Partial<State> {
+    // 纯函数推导：仅从错误推导降级状态，绝不在静态推导函数中生成随机数或执行时钟/网络副作用
+    return { hasError: true, error };
   }
 
   public override componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    // 【处置边界单点记录】：上报完整错误堆栈与组件树调用帧，使用显式注入的 reporter
+    // 【处置边界】：在 componentDidCatch 副作用生命周期中生成唯一追踪 ID，确保 UI 与上报共用同一 ID
+    const errorId = crypto.randomUUID();
+    this.setState({ errorId });
+
     const report: TelemetryErrorReport = {
-      errorId: this.state.errorId,
+      errorId,
       name: error.name,
       message: error.message,
       stack: error.stack,
+      cause: error.cause,
       componentStack: errorInfo.componentStack
     };
 
     if (this.props.reporter) {
       this.props.reporter(report);
     } else {
-      console.error("[SafeModuleBoundary] Error caught at boundary:", report);
+      // 上报函数缺失时的保底单点记录，保留完整 cause 与现场堆栈，严禁无声丢失
+      console.error(`[SafeModuleBoundary] Error caught at boundary (trace: ${errorId}):`, report);
     }
   }
 
@@ -186,26 +195,11 @@ export class SafeModuleBoundary extends Component<SafeModuleBoundaryProps, State
       return (
         <div className="module-error-fallback" role="alert">
           <h3>{this.props.fallbackTitle ?? "该模块暂时无法加载"}</h3>
-          <p>故障已记录（错误追踪码：{this.state.errorId}），请刷新重试。</p>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-      componentStack: errorInfo.componentStack
-    });
-  }
-
-  public override render(): ReactNode {
-    if (this.state.hasError) {
-      return (
-        <div className="module-error-fallback" role="alert">
-          <h3>{this.props.fallbackTitle ?? "该模块暂时无法加载"}</h3>
-          <p>故障已记录（错误追踪码：{this.state.errorId}），请刷新重试。</p>
+          <p>
+            故障已记录
+            {this.state.errorId ? `（错误追踪码：${this.state.errorId}）` : "，正在登记排查凭证..."}
+            ，请刷新重试。
+          </p>
         </div>
       );
     }

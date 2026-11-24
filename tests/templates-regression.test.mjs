@@ -3,13 +3,17 @@
 /**
  * tests/templates-regression.test.mjs
  * 
- * 模板回归测试：
+ * 模板与工程契约回归测试：
  * 1. 验证 state-machine-template.ts 的确定性纯函数特性（零时钟副作用，完全可重现）
  * 2. 验证 state-machine-template.ts 的严格输入边界检查
  * 3. 验证 typed-error-template.ts 的三层因果链保留（ES2022+ Error.cause）
+ * 4. 验证 validate-links.mjs 的精准仓库相对路径解析（杜绝同名 README.md 混淆与错指漏检）
+ * 5. 验证 rules / manifest 结构性模式约束验证器的有效性
  */
 
 import assert from "node:assert/strict";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   transitionOrderState,
   IllegalArgumentError,
@@ -20,6 +24,15 @@ import {
   UserServiceError,
   DatabaseQueryError
 } from "../templates/typed-error-template.ts";
+import {
+  verifyProfileContentAgainstManifest,
+  validateRulesStructure,
+  validateManifestStructure
+} from "./validate-links.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, "..");
 
 function test(name, fn) {
   try {
@@ -43,7 +56,7 @@ async function asyncTest(name, fn) {
   }
 }
 
-console.log("[templates-regression.test] Running regression tests for templates...");
+console.log("[templates-regression.test] Running regression tests for templates and link validation...");
 
 // ==========================================
 // 1. 状态机确定性与边界测试
@@ -168,4 +181,68 @@ await asyncTest("6. 强类型错误因果链保留：DAO -> Service 两层 cause
   assert(rootCause.message.includes("Connection reset by peer"), "Root cause should preserve raw driver message");
 });
 
-console.log("✅ All template regression tests passed successfully!");
+// ==========================================
+// 3. Profile 与 Manifest 完整仓库路径校验回归测试 (防同名混淆)
+// ==========================================
+
+test("7. Profile 路径对齐测试：精准识别错指或漏指的同名 README.md", () => {
+  const fakeProfilePath = path.join(REPO_ROOT, "profiles", "fake-profile.md");
+  
+  // 模拟一个 Markdown 文本：故意把 frameworks/react/README.md 漏掉，或者错指成 languages/typescript/README.md
+  const mockContentWithMisdirection = `
+# Fake Profile
+- [Root README](../README.md)
+- [TS README](../languages/typescript/README.md)
+- [Another TS link (misdirected)](../languages/typescript/README.md)
+  `;
+
+  const requiredFiles = [
+    "README.md",
+    "languages/typescript/README.md",
+    "frameworks/react/README.md" // 必须包含但 mock 中未链接它
+  ];
+
+  const result = verifyProfileContentAgainstManifest(mockContentWithMisdirection, fakeProfilePath, requiredFiles, REPO_ROOT);
+  assert.strictEqual(result.valid, false, "Should detect that frameworks/react/README.md is missing");
+  assert(result.missingFiles.includes("frameworks/react/README.md"));
+  assert(!result.missingFiles.includes("README.md"));
+  assert(!result.missingFiles.includes("languages/typescript/README.md"));
+});
+
+test("8. Profile 路径对齐测试：正确链接所有文件时通过验证", () => {
+  const fakeProfilePath = path.join(REPO_ROOT, "profiles", "fake-profile.md");
+  const mockContentValid = `
+# Fake Profile
+- [Root README](../README.md)
+- [TS README](../languages/typescript/README.md)
+- [React README](../frameworks/react/README.md)
+  `;
+
+  const requiredFiles = [
+    "README.md",
+    "languages/typescript/README.md",
+    "frameworks/react/README.md"
+  ];
+
+  const result = verifyProfileContentAgainstManifest(mockContentValid, fakeProfilePath, requiredFiles, REPO_ROOT);
+  assert.strictEqual(result.valid, true);
+  assert.strictEqual(result.missingFiles.length, 0);
+});
+
+// ==========================================
+// 4. Schema 结构性校验器有效性测试
+// ==========================================
+
+test("9. Schema 校验器：拒绝不合法的 rules 与 manifest 结构", () => {
+  // 非法 rules 结构（缺少 required rules 字段）
+  const invalidRules = { version: "1.0.0", description: "test" };
+  const ruleErrors = validateRulesStructure(invalidRules);
+  assert(ruleErrors.length > 0);
+
+  // 非法 manifest 结构（缺少 common 字段）
+  const invalidManifest = { version: "1.0.0", description: "test" };
+  const manifestErrors = validateManifestStructure(invalidManifest);
+  assert(manifestErrors.length > 0);
+});
+
+console.log("✅ All 9 template & contract regression tests passed successfully!");

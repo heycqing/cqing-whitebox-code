@@ -137,6 +137,36 @@ export function validateManifestStructure(data) {
     if (!Array.isArray(cfg.files) || cfg.files.length === 0) errors.push(`framework ${fw} missing files`);
     if (!Array.isArray(cfg.supportedLanguages) || cfg.supportedLanguages.length === 0) errors.push(`framework ${fw} missing supportedLanguages`);
   }
+
+  // 双向一致性校验：manifest.languages[*].compatibleFrameworks 与 manifest.frameworks[*].supportedLanguages
+  if (data.languages && data.frameworks) {
+    for (const [lang, cfg] of Object.entries(data.languages)) {
+      if (Array.isArray(cfg.compatibleFrameworks)) {
+        for (const fw of cfg.compatibleFrameworks) {
+          const fwCfg = data.frameworks[fw];
+          if (!fwCfg) {
+            errors.push(`Language '${lang}' declares compatibleFramework '${fw}', but '${fw}' is not defined in frameworks`);
+          } else if (!Array.isArray(fwCfg.supportedLanguages) || !fwCfg.supportedLanguages.includes(lang)) {
+            errors.push(`Bidirectional conflict: language '${lang}' declares compatibleFramework '${fw}', but framework '${fw}.supportedLanguages' does not include '${lang}'`);
+          }
+        }
+      }
+    }
+
+    for (const [fw, cfg] of Object.entries(data.frameworks)) {
+      if (Array.isArray(cfg.supportedLanguages)) {
+        for (const lang of cfg.supportedLanguages) {
+          const langCfg = data.languages[lang];
+          if (!langCfg) {
+            errors.push(`Framework '${fw}' declares supportedLanguage '${lang}', but '${lang}' is not defined in languages`);
+          } else if (!Array.isArray(langCfg.compatibleFrameworks) || !langCfg.compatibleFrameworks.includes(fw)) {
+            errors.push(`Bidirectional conflict: framework '${fw}' declares supportedLanguage '${lang}', but language '${lang}.compatibleFrameworks' does not include '${fw}'`);
+          }
+        }
+      }
+    }
+  }
+
   return errors;
 }
 

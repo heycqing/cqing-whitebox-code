@@ -150,4 +150,71 @@ test("13. CLI 命令行调用测试：不兼容参数返回非零退出码", () 
   assert(failed, "Expected command to fail with non-zero exit code");
 });
 
-console.log("✅ All 13 profile resolution tests passed successfully!");
+test("14. CLI 缺失或非法参数拒绝：--framework 缺少参数值时返回非零退出码", () => {
+  let failed = false;
+  try {
+    execFileSync("node", [SCRIPT_PATH, "--language", "typescript", "--framework"], {
+      encoding: "utf-8",
+      stdio: "pipe"
+    });
+  } catch (err) {
+    failed = true;
+    assert.strictEqual(err.status, 1);
+  }
+  assert(failed, "Expected command to fail when --framework has no value");
+});
+
+test("15. CLI 缺失或非法参数拒绝：--framework 的值被下一个选项占用 (--json)", () => {
+  let failed = false;
+  try {
+    execFileSync("node", [SCRIPT_PATH, "--language", "typescript", "--framework", "--json"], {
+      encoding: "utf-8",
+      stdio: "pipe"
+    });
+  } catch (err) {
+    failed = true;
+    assert.strictEqual(err.status, 1);
+  }
+  assert(failed, "Expected command to fail when --framework is followed by an option");
+});
+
+test("16. CLI 缺失或非法参数拒绝：--language 缺值或为空串", () => {
+  let failed = false;
+  try {
+    execFileSync("node", [SCRIPT_PATH, "--language"], {
+      encoding: "utf-8",
+      stdio: "pipe"
+    });
+  } catch (err) {
+    failed = true;
+    assert.strictEqual(err.status, 1);
+  }
+  assert(failed, "Expected command to fail when --language has no value");
+});
+
+test("17. 双向一致性校验：manifest 声明冲突时解析器拒绝通过", () => {
+  // 模拟冲突的 manifest：languages.typescript 声明兼容 react，但 frameworks.react.supportedLanguages 仅包含 javascript
+  const conflictingManifest = {
+    languages: {
+      typescript: {
+        displayName: "TypeScript",
+        files: ["languages/typescript/README.md"],
+        compatibleFrameworks: ["react"]
+      }
+    },
+    frameworks: {
+      react: {
+        displayName: "React",
+        files: ["frameworks/react/README.md"],
+        supportedLanguages: ["javascript"] // 冲突：未包含 typescript
+      }
+    }
+  };
+
+  assert.throws(
+    () => resolveProfileFiles("typescript", "react", conflictingManifest),
+    /Incompatible combination or bidirectional manifest conflict/
+  );
+});
+
+console.log("✅ All 17 profile resolution tests passed successfully!");

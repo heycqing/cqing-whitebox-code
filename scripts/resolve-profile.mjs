@@ -53,9 +53,17 @@ function parseArgs(args) {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--language" || arg === "-l") {
-      language = args[++i];
+      const val = args[++i];
+      if (val === undefined || typeof val !== "string" || val.trim().length === 0 || val.startsWith("-")) {
+        printUsageAndExit(1, `Missing or invalid value for option '${arg}'`);
+      }
+      language = val.trim();
     } else if (arg === "--framework" || arg === "-f") {
-      framework = args[++i];
+      const val = args[++i];
+      if (val === undefined || typeof val !== "string" || val.trim().length === 0 || val.startsWith("-")) {
+        printUsageAndExit(1, `Missing or invalid value for option '${arg}'`);
+      }
+      framework = val.trim();
     } else if (arg === "--json") {
       asJson = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -68,40 +76,50 @@ function parseArgs(args) {
   return { language, framework, asJson };
 }
 
-export function resolveProfileFiles(language, framework = null) {
-  if (!fs.existsSync(MANIFEST_PATH)) {
-    throw new Error(`Manifest file not found at: ${MANIFEST_PATH}`);
+export function resolveProfileFiles(language, framework = null, customManifest = null) {
+  let manifest = customManifest;
+  if (!manifest) {
+    if (!fs.existsSync(MANIFEST_PATH)) {
+      throw new Error(`Manifest file not found at: ${MANIFEST_PATH}`);
+    }
+    manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8"));
   }
 
-  const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8"));
-
   // 1. 校验语言
-  if (!language || typeof language !== "string") {
+  if (!language || typeof language !== "string" || language.trim().length === 0) {
     throw new Error("Language must be specified via --language <name>");
   }
 
   const langKey = language.trim().toLowerCase();
-  const langConfig = manifest.languages[langKey];
+  const langConfig = manifest.languages?.[langKey];
   if (!langConfig) {
-    const supported = Object.keys(manifest.languages).join(", ");
+    const supported = Object.keys(manifest.languages || {}).join(", ");
     throw new Error(`Unsupported language '${language}'. Supported languages: ${supported}`);
   }
 
-  // 2. 校验框架与兼容性
+  // 2. 校验框架与双向兼容性一致性
   let fwConfig = null;
   let fwKey = null;
   if (framework) {
+    if (typeof framework !== "string" || framework.trim().length === 0) {
+      throw new Error("Framework cannot be an empty string if specified");
+    }
     fwKey = framework.trim().toLowerCase();
-    fwConfig = manifest.frameworks[fwKey];
+    fwConfig = manifest.frameworks?.[fwKey];
     if (!fwConfig) {
-      const supported = Object.keys(manifest.frameworks).join(", ");
+      const supported = Object.keys(manifest.frameworks || {}).join(", ");
       throw new Error(`Unsupported framework '${framework}'. Supported frameworks: ${supported}`);
     }
 
-    if (!langConfig.compatibleFrameworks || !langConfig.compatibleFrameworks.includes(fwKey)) {
+    const isLangCompatible = Array.isArray(langConfig.compatibleFrameworks) && langConfig.compatibleFrameworks.includes(fwKey);
+    const isFwSupported = Array.isArray(fwConfig.supportedLanguages) && fwConfig.supportedLanguages.includes(langKey);
+
+    if (!isLangCompatible || !isFwSupported) {
       throw new Error(
-        `Incompatible combination: Framework '${framework}' is not compatible with language '${language}'. ` +
-        `Allowed frameworks for '${language}': [${(langConfig.compatibleFrameworks || []).join(", ")}]`
+        `Incompatible combination or bidirectional manifest conflict: ` +
+        `Framework '${framework}' compatibility check failed with language '${language}'. ` +
+        `(Language compatibleFrameworks: [${(langConfig.compatibleFrameworks || []).join(", ")}], ` +
+        `Framework supportedLanguages: [${(fwConfig.supportedLanguages || []).join(", ")}])`
       );
     }
   }

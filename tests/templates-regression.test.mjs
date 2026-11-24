@@ -245,6 +245,29 @@ test("9. Schema 校验器：拒绝不合法的 rules 与 manifest 结构", () =>
   const invalidManifest = { version: "1.0.0", description: "test" };
   const manifestErrors = validateManifestStructure(invalidManifest);
   assert(manifestErrors.length > 0);
+
+  // 双向不一致的 manifest 结构
+  const inconsistentManifest = {
+    version: "1.0.0",
+    common: { entry: [], foundations: [], patterns: [], antiPatterns: [], review: [] },
+    languages: {
+      typescript: {
+        displayName: "TypeScript",
+        files: ["languages/typescript/README.md"],
+        compatibleFrameworks: ["react"]
+      }
+    },
+    frameworks: {
+      react: {
+        displayName: "React",
+        files: ["frameworks/react/README.md"],
+        supportedLanguages: ["javascript"] // 冲突：缺少 typescript
+      }
+    }
+  };
+  const conflictErrors = validateManifestStructure(inconsistentManifest);
+  assert(conflictErrors.length > 0, "Validator must detect bidirectional compatibility conflict");
+  assert(conflictErrors.some((e) => e.includes("Bidirectional conflict")));
 });
 
 // ==========================================

@@ -71,5 +71,6 @@ const formattedPrice = computed(() => `¥${price.value.toFixed(2)}`);
 ```
 
 ### 2.3 错误处置边界 (`onErrorCaptured` 与全局 handler)
-- `onErrorCaptured` 用于捕获后代组件生命周期与渲染错误。如果当前组件能够通过局部降级处理，可返回 `false` 阻止继续向上冒泡；
-- 未被局部消解的异常最终汇聚至 `app.config.errorHandler`，在此处完成链路 ID 绑定与监控单点上报。
+- **处置责任与单点记录**：
+  - 若局部组件使用 `onErrorCaptured` 拦截并展示降级 UI，且通过返回 `false` 阻止继续向上冒泡，则**该局部组件即为当前错误的处置边界**。处置边界必须在拦截处单点记录包含完整 `cause`、堆栈与 `traceId` 的错误日志，不可返回 `false` 却不记录任何日志（否则构成 W01 无声吞错）；同时，UI 界面仅展示脱敏安全文案，禁止将底层技术堆栈或裸 `err.message` 直接输出给终端用户。
+  - 若当前组件无法提供降级修复，则不得返回 `false`，让异常自然冒泡至根节点的 `app.config.errorHandler` 进行全局单点兜底记录，杜绝层层重复打印。

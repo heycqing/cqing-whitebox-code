@@ -105,4 +105,4 @@ function processOrderCheckout(user: User, order: Order, couponCode?: string): Ch
 ## 6. 对应规则
 
 - **W04** (P1): 显式扁平控制流（嵌套深度 $>3$ 视为审查信号）
-- **W12** (P2): 显式领域概念与消除魔数
+- **W13** (P2): 显式领域概念与消除魔数

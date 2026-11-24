@@ -94,4 +94,4 @@ node scripts/resolve-profile.mjs --language typescript --framework react
 node scripts/resolve-profile.mjs -l python --json
 ```
 
-详细接入流程与冲突处理原则请参见 [ONBOARDING.md](file:///D:/mine-prop/cqing-whitebox-code/ONBOARDING.md)。
+详细接入流程与冲突处理原则请参见 [ONBOARDING.md](./ONBOARDING.md)。

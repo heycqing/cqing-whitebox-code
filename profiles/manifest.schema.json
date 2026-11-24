@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cqing.dev/schemas/manifest.schema.json",
+  "title": "WhiteboxManifest",
+  "description": "JSON Schema for cqing-whitebox-code profiles manifest",
+  "type": "object",
+  "required": ["version", "description", "common", "languages", "frameworks"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "description": {
+      "type": "string"
+    },
+    "common": {
+      "type": "object",
+      "required": ["entry", "foundations", "patterns", "antiPatterns", "review"],
+      "properties": {
+        "entry": { "type": "array", "items": { "type": "string" } },
+        "foundations": { "type": "array", "items": { "type": "string" } },
+        "patterns": { "type": "array", "items": { "type": "string" } },
+        "antiPatterns": { "type": "array", "items": { "type": "string" } },
+        "review": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "languages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["displayName", "files", "compatibleFrameworks"],
+        "properties": {
+          "displayName": { "type": "string" },
+          "files": { "type": "array", "items": { "type": "string" } },
+          "compatibleFrameworks": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "frameworks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["displayName", "files", "supportedLanguages"],
+        "properties": {
+          "displayName": { "type": "string" },
+          "files": { "type": "array", "items": { "type": "string" } },
+          "supportedLanguages": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

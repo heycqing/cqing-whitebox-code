@@ -196,7 +196,7 @@ def load_tenant_config(config_dir: str, tenant_id: str) -> dict[str, Any]:
             # 不可变防御性拷贝 (W02)
             return dict(data)
     except (json.JSONDecodeError, OSError, TypeError) as err:
-        # W07: PEP 3134 保留因果链；不在中间层重复 log error (W11)
+        # W07: PEP 3134 保留因果链；不在中间层重复 log error
         raise ConfigurationError(
             f"Failed to read or parse tenant config from {file_path}: {err}",
             config_file=str(file_path)

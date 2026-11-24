@@ -135,4 +135,5 @@ export async function handleLoginEndpoint(req: ApiRequest, res: ApiResponse) {
 ## 6. 对应规则
 
 - **W07** (P1): 保留错误因果链与边界单点记录
-- **W11** (P2): 最小必要日志与脱敏原则
+- **W11** (P0): 严禁日志泄露敏感凭证与隐私数据
+- **W12** (P2): 日志关联链路标识与必要上下文

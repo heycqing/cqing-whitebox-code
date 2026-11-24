@@ -102,9 +102,26 @@ export function useNotifications() {
 import { createApp } from "vue";
 import App from "./App.vue";
 
+export interface TelemetryReport {
+  readonly traceId: string;
+  readonly error: unknown;
+  readonly info: string;
+}
+
+export type GlobalTelemetryClient = {
+  reportError: (report: TelemetryReport) => void;
+};
+
+// 显式声明全局遥测依赖接口（示例中提供默认安全降级）
+declare global {
+  interface Window {
+    telemetryClient?: GlobalTelemetryClient;
+  }
+}
+
 const app = createApp(App);
 
-// 【处置边界单点记录】：记录全应用生命周期与渲染期逃逸异常
+// 【全局处置边界单点记录】：记录全应用生命周期中未被局部拦截的逃逸异常
 app.config.errorHandler = (err, instance, info) => {
   const traceId = crypto.randomUUID();
   console.error(`[Global Error Handler] traceId: ${traceId}`, {
@@ -116,7 +133,7 @@ app.config.errorHandler = (err, instance, info) => {
   // 上报远程监控
   window.telemetryClient?.reportError({
     traceId,
-    error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : String(err),
+    error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack, cause: err.cause } : String(err),
     info
   });
 };
@@ -129,22 +146,47 @@ app.mount("#app");
 <script setup lang="ts">
 import { ref, onErrorCaptured } from "vue";
 
-const hasError = ref(false);
-const errorInfo = ref("");
+export interface SafeWidgetProps {
+  readonly fallbackTitle?: string;
+  readonly logger?: (payload: { errorId: string; error: unknown; info: string }) => void;
+}
 
-onErrorCaptured((err, targetInstance, info) => {
-  // 捕获后代组件错误，展示局部降级卡片
+const props = withDefaults(defineProps<SafeWidgetProps>(), {
+  fallbackTitle: "小部件内容暂时无法加载"
+});
+
+const hasError = ref(false);
+const errorId = ref<string | null>(null);
+
+onErrorCaptured((err: unknown, targetInstance, info) => {
+  const traceId = crypto.randomUUID();
   hasError.value = true;
-  errorInfo.value = err instanceof Error ? err.message : String(err);
-  
-  // 返回 false 阻止继续向上传播（若当前卡片已完成自愈降级）
+  errorId.value = traceId;
+
+  // 【局部处置边界单点记录】：既然返回 false 拦截了冒泡，就必须由本组件承担完整记录责任！
+  // 记录完整因果、堆栈与组件上下文，严禁无声吞错
+  const logPayload = {
+    errorId: traceId,
+    error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack, cause: err.cause } : String(err),
+    info,
+    componentName: targetInstance?.$options?.name ?? "ChildWidget"
+  };
+
+  if (props.logger) {
+    props.logger(logPayload);
+  } else {
+    console.error(`[SafeWidget Error Boundary] traceId: ${traceId}`, logPayload);
+  }
+
+  // 返回 false 阻止继续向上传播（防止被 app.config.errorHandler 重复打印造成日志洪泛）
   return false;
 });
 </script>
 
 <template>
   <div v-if="hasError" class="widget-fallback" role="alert">
-    <p>小部件加载遇到问题：{{ errorInfo }}</p>
+    <!-- 安全防护：UI 仅展示脱敏后的友好文案与追踪码，绝不把原始 err.message 直接输出给用户 -->
+    <p>{{ fallbackTitle }}，请稍后刷新重试（故障追踪号：{{ errorId }}）</p>
   </div>
   <slot v-else />
 </template>

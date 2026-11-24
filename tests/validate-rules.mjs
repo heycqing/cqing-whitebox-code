@@ -4,12 +4,13 @@
  * tests/validate-rules.mjs
  * 
  * 校验 rules.json 规则注册表的合法性与完整性：
- * 1. JSON 格式有效可解析
- * 2. 包含稳定且唯一的规则 ID (如 W01 - W12)
+ * 1. JSON 格式有效可解析，声明的 $schema 真实存在且有效
+ * 2. 包含稳定且唯一的规则 ID (W01 - W13)
  * 3. level 必须为合法枚举 ("P0" | "P1" | "P2")
- * 4. 必须字段非空：id, level, title, intent, trigger, evidence, exceptions, remediation, appliesTo
- * 5. appliesTo 必须为非空数组
- * 6. 若声明了 reference，对应的相对路径文件必须在仓库中存在
+ * 4. P0 规则必须包含 W01、W02 以及 W11（敏感凭据泄露门禁）
+ * 5. 必须字段非空：id, level, title, intent, trigger, evidence, exceptions, remediation, appliesTo
+ * 6. appliesTo 必须为非空数组
+ * 7. 若声明了 reference，对应的相对路径文件必须在仓库中存在
  */
 
 import fs from "node:fs";
@@ -60,6 +61,20 @@ function runValidation() {
     data = JSON.parse(content);
   } catch (err) {
     fail(`Invalid JSON syntax: ${err.message}`);
+  }
+
+  // 1. 验证 $schema 引用有效性（消除悬空 schema 引用）
+  if (data.$schema) {
+    const schemaPath = path.resolve(path.dirname(RULES_PATH), data.$schema);
+    if (!fs.existsSync(schemaPath)) {
+      fail(`Declared $schema file does not exist: '${data.$schema}' (resolved to: ${schemaPath})`);
+    }
+    try {
+      JSON.parse(fs.readFileSync(schemaPath, "utf-8"));
+    } catch (err) {
+      fail(`Declared $schema file is not valid JSON: ${err.message}`);
+    }
+    console.log(`  ✓ Verified $schema reference: ${data.$schema}`);
   }
 
   if (!data || !Array.isArray(data.rules)) {
@@ -124,7 +139,16 @@ function runValidation() {
     }
   }
 
-  console.log(`✅ validate-rules passed successfully: ${rules.length} rules validated without errors.`);
+  // 校验敏感数据凭据泄露门禁必须为 P0
+  const w11Rule = rules.find((r) => r.id === "W11");
+  if (!w11Rule) {
+    fail("Rule W11 must exist in registry");
+  }
+  if (w11Rule.level !== "P0") {
+    fail(`Rule W11 (sensitive data leaks) MUST be configured as 'P0' tier gate, got '${w11Rule.level}'`, "W11", "level");
+  }
+
+  console.log(`✅ validate-rules passed successfully: ${rules.length} rules validated without errors (including $schema and P0 security gates).`);
 }
 
 runValidation();

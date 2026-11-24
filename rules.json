@@ -1,0 +1,175 @@
+{
+  "$schema": "./rules.schema.json",
+  "version": "1.0.0",
+  "description": "cqing-whitebox-code 跨语言可观察质量规则注册表",
+  "rules": [
+    {
+      "id": "W01",
+      "level": "P0",
+      "title": "禁止无声丢失失败",
+      "intent": "确保系统中的每一次失败都留下可追溯的因果痕迹，严禁故障信息被静默吞没导致无法排查根因。",
+      "trigger": "代码中捕获了异常却未记录、未向上抛出，或者忽略了异步 Promise 的 rejection，或者通过无因果的空值/默认值隐藏了致命失败，或者调用返回了错误码/错误对象却未对其进行判定。",
+      "evidence": "出现空的 catch 块（如 catch (e) {}）；调用异步操作未 await 或未附带 .catch()；在 catch 块中仅 return null/undefined/默认值且未记录任何日志；使用伪防御性空值合并（如 criticalId ?? ''）在缺失关键上下文时伪装正常执行。",
+      "exceptions": "有明确架构设计的降级策略（必须在代码中显著注释业务降级理由，并在 debug/warn 级别单点记录被降级的底层异常原因），或对已知可安全忽略的可选资源探测（例如尝试从可选的局部缓存中读取未命中）。",
+      "remediation": "将异常附带原始因果链（cause / raise from）向上层重新抛出；或在具备处置责任的边界记录包含完整上下文与堆栈的错误日志，并返回结构化的失败结果契约。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "anti-patterns/AP01-silent-swallowing.md"
+    },
+    {
+      "id": "W02",
+      "level": "P0",
+      "title": "禁止未声明的共享数据修改",
+      "intent": "保障状态变化的确定性与可定位性，杜绝因就地修改外部传入对象或共享状态引发的难以复现的幽灵副作用与竞态 Bug。",
+      "trigger": "函数直接对入参对象、数组、外部传入的 Map/Set、模块级变量或全局缓存执行原地写操作（in-place mutation），且该函数的命名、参数标注或接口契约未明确声明其写副作用。",
+      "evidence": "函数内部直接调用了 param.push(...)、param.field = value、delete param.field，或者在 query/getter 风格函数中就地修改了全局缓存；调用方在传入对象后发现自身状态在不知情的情况下被篡改。",
+      "exceptions": "专门设计为原地更新器的函数（其命名必须显式包含 mutate/updateInPlace/populate 等修改语义，且在文档和类型签名中有明确说明）；或完全在函数内部新分配的局部临时对象/数组的原地填充（未逸出到外部作用域）。",
+      "remediation": "采用不可变数据流更新模式，通过浅拷贝/展开运算符（Spread Operator）返回包含变更的新对象或数组；或在函数签名与命名上明确标注文档与副作用。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "anti-patterns/AP03-implicit-mutation.md"
+    },
+    {
+      "id": "W03",
+      "level": "P1",
+      "title": "消除无边界职责的幽灵抽象",
+      "intent": "降低维护者与 AI 的调用跳转认知负荷，防止过度工程化导致的数据流动追踪困难。",
+      "trigger": "新增或存在的抽象层（函数、类、服务中介）仅对底层调用进行纯粹的参数原样转发，既不进行数据格式转换/防腐，也不进行错误处理，也没有独立单元测试或多处复用的价值。",
+      "evidence": "函数体只有单行调用且直接透传入参和返回值；该抽象仅被单一调用方消费；阅读者需要连续下钻 3 层以上才能看到实际执行逻辑。注意：按职责判断，不以单次调用自动判错；若该单次调用具有防腐或隔离价值则属于合法抽象。",
+      "exceptions": "作为微内核或架构边界明确规定的防腐层（ACL/Gateway/Adapter）；为了单元测试方便注入 mock 的显式接口边界；用于抹平第三方 SDK 版本差异的最小包装器。",
+      "remediation": "内联（Inline）该无职责的幽灵抽象，使调用方直接与真实逻辑交互，减少不必要的调用跳转与心智负担。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "anti-patterns/AP02-ghost-abstraction.md"
+    },
+    {
+      "id": "W04",
+      "level": "P1",
+      "title": "显式扁平控制流",
+      "intent": "保持核心业务逻辑在扁平的主干道上流动，提高代码可读性与可推演性。",
+      "trigger": "代码中出现过深的条件分支嵌套，将正常的主业务流深埋在层层 if-else 或回调深处。",
+      "evidence": "代码缩进嵌套层级超过 3 层（如 if 嵌套 if 嵌套 try 嵌套 loop）。注意：嵌套深度 > 3 作为审查信号（review signal），提示应当关注此处是否可扁平化，而非死板的机械自动失败条件。",
+      "exceptions": "固有的多维递归算法、语法分析器、数学矩阵遍历等不可避免的多层算法逻辑（应通过就近注释说明算法原因）。",
+      "remediation": "采用卫语句（Guard Clauses）提早返回（Early Return），先处理边界条件、异常情况和空值判断，使主要逻辑保持在最外层缩进。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "patterns/01-explicit-control-flow.md"
+    },
+    {
+      "id": "W05",
+      "level": "P1",
+      "title": "显式状态建模与避免非法状态",
+      "intent": "使组件或模块的生命周期状态精确且排他，杜绝组合布尔变量产生的未定义状态与逻辑冲突。",
+      "trigger": "使用多个互不相关的布尔标记（Boolean Flags）组合来表达排他性状态生命周期，导致系统可能进入逻辑上矛盾或不可解释的状态。",
+      "evidence": "同一对象或组件内同时定义了 isLoading、isSuccess、isError、isEmpty 等多个布尔值，在不同的异步分支中需要手动逐一重置这些变量，极易漏改导致 isLoading=true 与 isError=true 并存（布尔地狱）。",
+      "exceptions": "真正属于正交、互相独立且可自由组合的开关特征（例如 isDarkTheme、showSidebar 等）。",
+      "remediation": "使用判别联合（Discriminated Union）、状态字面量（status: 'idle' | 'loading' | 'success' | 'error'）或显式有限状态机建模，让类型系统在编译期排斥非法状态。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "anti-patterns/AP04-nested-boolean-hell.md"
+    },
+    {
+      "id": "W06",
+      "level": "P1",
+      "title": "区分边界校验与内部不变式断言",
+      "intent": "确保在系统边缘严把输入关，并在系统内部维持高可信契约，杜绝内部无意义的伪防御与错误蔓延。",
+      "trigger": "混淆了不可控的外部输入（用户请求、外部 API 返回）与系统内部可控的不变式契约；或者内部逻辑到处充斥着兜底容错，掩盖代码逻辑缺陷。",
+      "evidence": "外部 I/O 边界未做模式校验（Schema Validation），不可信字段直接渗入业务核心；或在内部私有函数中对前置已保证非空的参数反复使用 optional chaining 与兜底 fallback 假冒通过。",
+      "exceptions": "对弱类型动态宿主环境暴露的公共 SDK 库入口方法。",
+      "remediation": "在最外层 I/O 边界使用类型收窄/Schema 工具拦截非法输入并返回友好 4xx 错误；在内部私有模块中使用不变式断言（Assert），一旦不变式破坏立即快速失败（Fail Fast）。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "patterns/02-runtime-invariants.md"
+    },
+    {
+      "id": "W07",
+      "level": "P1",
+      "title": "保留错误因果链与边界单点记录",
+      "intent": "保证全链路故障定位的精确性，同时防止日志洪泛干扰排查。",
+      "trigger": "在异常传递过程中丢失底层初始错误对象，或者在跨层调用时每个函数层都重复打印一次 error 级别日志。",
+      "evidence": "重新抛出异常时未传递原始错误（如未设置 Error.cause 或未写 raise ... from）；同一错误在 DAO、Service、Controller 均被 logger.error 打印一遍，产生多条重复无因果关系的日志堆栈。",
+      "exceptions": "对外暴露的安全边界（如返回给用户的提示信息必须经过脱敏脱密），但服务端单点日志仍须保留完整 cause 链。",
+      "remediation": "包装异常时使用 cause 机制附带上级因果；仅在具备处理职责的最外层边界（如请求拦截器、Worker 主循环）单点记录一次错误日志与调用上下文。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "patterns/03-causal-error-handling.md"
+    },
+    {
+      "id": "W08",
+      "level": "P1",
+      "title": "行为就近编排原则",
+      "intent": "保持相关逻辑在物理上下文上的高内聚，减少开发者跨目录跨文件理解单一行为的心智阻力。",
+      "trigger": "将仅被单一功能或组件使用的逻辑机械地拆分到远端公共目录（如全局 utils、helpers、common），导致理解和修改单一功能需同时在多个无关目录间来回跳转。",
+      "evidence": "某个仅被一个 React/Vue 组件调用的 5 行格式化函数被抽离到全局 utils/formatter.ts；或某个领域动作的校验、计算、执行被无故分散在三个不同子目录且互相引用。",
+      "exceptions": "已证实被 3 个以上独立业务模块共同消费、且经过严格单元测试覆盖的稳定通用基础设施工具。",
+      "remediation": "遵循就近编排（Colocation）原则，将特定功能强相关的类型、状态、衍生逻辑和 UI 组件就近组织在同一个文件或同级特性目录内。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "patterns/05-behavior-colocation.md"
+    },
+    {
+      "id": "W09",
+      "level": "P1",
+      "title": "函数命名与副作用严格一致",
+      "intent": "让调用方仅通过函数签名和名称即可准确预期执行代价与行为，消除意料之外的隐式写操作。",
+      "trigger": "函数命名采用只读、查询或判定类词缀（如 get、fetch、is、has、calculate、validate、check），但函数内部却执行了状态修改、缓存写入、数据删除或网络写请求。",
+      "evidence": "在 getUserInfo() 内部执行了 localStorage.setItem() 或向服务端发送写请求；在 isValidToken() 内部修改了全局用户登录状态；或在计算属性 getter 中触发了远程同步。",
+      "exceptions": "完全幂等、对外部不可察觉的内部性能缓存（Cache Memoization），且该缓存不影响外部任何逻辑与可观察状态。",
+      "remediation": "将函数名称重命名为体现副作用的动词（如 syncAndGetUser、validateAndPersistState）；或重构代码将只读计算与副作用写操作解耦为两个独立函数。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "anti-patterns/AP03-implicit-mutation.md"
+    },
+    {
+      "id": "W10",
+      "level": "P1",
+      "title": "禁止伪防御性空值与可选链滥用",
+      "intent": "防止使用形式上的“容错语法”掩盖真正的前置契约缺陷与潜在的逻辑 Bug。",
+      "trigger": "在遇到属性可能为 null/undefined 时，不分析为何在当前时机该属性缺失，而是盲目在所有链路点追加 ?. 与 ?? 兜底默认值。",
+      "evidence": "核心关键主键或前置必填属性被写为 user?.account?.id ?? ''；一旦前置状态丢失，程序不会报错，而是在空 ID 状态下继续向后端发送非法请求，造成级联脏数据污染。",
+      "exceptions": "根据业务规格说明或外部接口契约明确声明为可选（Optional）的字段；或在未完成加载前的非关键展示文案占位。",
+      "remediation": "明确生命周期契约。如果该数据在当前执行分支下必须存在，应直接访问或显式使用断言（assert），前置暴露异常；若是可选字段，则显式编写分支逻辑。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "anti-patterns/AP01-silent-swallowing.md"
+    },
+    {
+      "id": "W11",
+      "level": "P2",
+      "title": "最小必要日志与脱敏原则",
+      "intent": "在提供排障必要线索的同时，严格保护用户隐私与系统安全资产，避免日志膨胀与安全合规风险。",
+      "trigger": "日志中打印了未经脱敏的敏感凭证、密钥、Token、密码、身份证号或银行卡号，或者日志完全缺少关联追踪标识（Trace ID / Request ID）导致无法在海量日志中检索链路。",
+      "evidence": "日志直接使用 logger.info(JSON.stringify(req.headers)) 打印了 Authorization 头部；或者打印了包含完整支付表单的明文；或者日志仅有一句 'Operation failed' 没有任何上下文 ID。",
+      "exceptions": "仅在完全隔离、无任何真实数据的本地纯脱敏开发单元测试环境下临时打印的调试输出（合并前必须清理）。",
+      "remediation": "结构化输出定位所需的最小必要字段；严格对敏感信息进行掩码脱敏（如仅保留前 2 后 4 位）；每一条业务日志必须关联 traceId / requestId。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "patterns/04-correlated-logging.md"
+    },
+    {
+      "id": "W12",
+      "level": "P2",
+      "title": "显式领域概念与消除魔数",
+      "intent": "使业务代码具备自解释性，降低协作理解成本，避免无解释常数引发的分支误解。",
+      "trigger": "在业务判断中硬编码无解释的数字、魔术字符串或复杂位运算掩码。",
+      "evidence": "代码中出现 if (user.status === 3)、if (diffDays > 45)、setTimeout(fn, 86400000) 等无上下文解释的内联常数。",
+      "exceptions": "语言或数学常识级常量（如数组首元素索引 0、除以 2 判偶数、百分比乘 100 等）。",
+      "remediation": "将魔数提取为具名的枚举（Enum）、常量对象（const Object）或常量定义，并附带简要业务说明（如 const USER_STATUS_SUSPENDED = 3）。",
+      "appliesTo": [
+        "all"
+      ],
+      "reference": "patterns/01-explicit-control-flow.md"
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "./manifest.schema.json",
+  "version": "1.0.0",
+  "description": "cqing-whitebox-code profile 组合与按需加载资产清单",
+  "common": {
+    "entry": [
+      "README.md",
+      "ONBOARDING.md",
+      "rules.json"
+    ],
+    "foundations": [
+      "foundations/cognitive-ergonomics.md",
+      "foundations/causal-traceability.md"
+    ],
+    "patterns": [
+      "patterns/01-explicit-control-flow.md",
+      "patterns/02-runtime-invariants.md",
+      "patterns/03-causal-error-handling.md",
+      "patterns/04-correlated-logging.md",
+      "patterns/05-behavior-colocation.md"
+    ],
+    "antiPatterns": [
+      "anti-patterns/AP01-silent-swallowing.md",
+      "anti-patterns/AP02-ghost-abstraction.md",
+      "anti-patterns/AP03-implicit-mutation.md",
+      "anti-patterns/AP04-nested-boolean-hell.md"
+    ],
+    "review": [
+      "checklists/pr-whitebox-gate.md",
+      "templates/whitebox-review-checklist.md"
+    ]
+  },
+  "languages": {
+    "typescript": {
+      "displayName": "TypeScript 5.x",
+      "files": [
+        "languages/typescript/README.md",
+        "languages/typescript/examples.md"
+      ],
+      "compatibleFrameworks": [
+        "react",
+        "vue"
+      ]
+    },
+    "javascript": {
+      "displayName": "JavaScript (ES2022+)",
+      "files": [
+        "languages/javascript/README.md",
+        "languages/javascript/examples.md"
+      ],
+      "compatibleFrameworks": [
+        "react",
+        "vue"
+      ]
+    },
+    "python": {
+      "displayName": "Python 3.10+",
+      "files": [
+        "languages/python/README.md",
+        "languages/python/examples.md"
+      ],
+      "compatibleFrameworks": []
+    }
+  },
+  "frameworks": {
+    "react": {
+      "displayName": "React 18/19",
+      "files": [
+        "frameworks/react/README.md",
+        "frameworks/react/examples.md"
+      ],
+      "supportedLanguages": [
+        "typescript",
+        "javascript"
+      ]
+    },
+    "vue": {
+      "displayName": "Vue 3.x",
+      "files": [
+        "frameworks/vue/README.md",
+        "frameworks/vue/examples.md"
+      ],
+      "supportedLanguages": [
+        "typescript",
+        "javascript"
+      ]
+    }
+  }
+}

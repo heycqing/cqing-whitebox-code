@@ -13,10 +13,10 @@
 - **需求**：为电商收银台实现支持优惠券折抵的订单结算纯计算函数与支付交互卡片。
 - **输入**：订单原始总额（`totalAmount`）、优惠券码（`couponCode`）、会员等级（`vipTier`）。
 - **必须覆盖的边缘用例与账务恒等式**：
-  1. **非法金额拦截**：`totalAmount <= 0`、`NaN`、`Infinity` 或非有限数值直接抛出 `RangeError` (W06)；
+  1. **非法金额与精度拦截**：`totalAmount <= 0`、`NaN`、`Infinity` 或非有限数值抛出 `RangeError`；金额必须精确到“分”（最多两位小数），对于 `0.001`、`1.005`、`1.015` 等亚分精度直接抛出 `RangeError` (W06)，严禁静默四舍五入；
   2. **空券处理**：优惠券为空或未传，实付全额，抵扣 0 元；
   3. **VIP 权限边界**：非 VIP 用户使用 VIP 专属券，拒绝使用并返回提示，金额不扣减；
-  4. **全额抵扣与账务一致性**：若优惠金额超过或等于订单金额，受最低支付额 `MIN_PAY_AMOUNT = 0.01` 元约束，实付为 0.01 元，实际抵扣额精准调整为 `Number((totalAmount - 0.01).toFixed(2))`。**严格保证账务恒等式：`totalAmount === Number((discount + finalPay).toFixed(2))`**；
+  4. **全额抵扣与账务一致性**：计算全部在整数“分”维度进行。若优惠金额超过或等于订单金额，受最低支付额 `MIN_PAY_AMOUNT = 0.01` 元（1分）约束，实付为 0.01 元，实际抵扣额精准调整为 `(totalCents - 1) / 100`。**严格保证账务恒等式：`totalAmount === Number((discount + finalPay).toFixed(2))`**；
   5. **异步支付异常处置**：网络超时或服务异常时，在处置边界记录原始技术错误与堆栈，面向用户界面仅呈现安全脱敏文案与排障追踪号 (W01, W07, W11)。
 
 ### 2. 真实纯计算函数实现（已由 Node 自动化测试运行）
@@ -25,6 +25,7 @@
 
 ```typescript
 export const MIN_PAY_AMOUNT = 0.01;
+const MIN_PAY_CENTS = 1;
 
 export interface CheckoutCalculationResult {
   readonly totalAmount: number;
@@ -43,14 +44,26 @@ export function computeCheckoutTotal(
     throw new RangeError("Order totalAmount must be a positive finite number");
   }
 
-  // 2. 无优惠券或空白券
+  // 2. 精度契约校验：仅接受精确到“分”的合法金额（最多两位小数），拒绝多余小数位 (如 0.001, 1.005)
+  const totalCents = Math.round(totalAmount * 100);
+  if (
+    Math.abs(totalAmount * 100 - totalCents) > 1e-9 ||
+    totalCents <= 0 ||
+    totalCents > Number.MAX_SAFE_INTEGER
+  ) {
+    throw new RangeError(
+      `Order totalAmount must have at most 2 decimal places (cents precision), got: ${totalAmount}`
+    );
+  }
+
+  // 3. 无优惠券或空白券
   if (!couponCode || couponCode.trim().length === 0) {
     return { totalAmount, discount: 0, finalPay: totalAmount };
   }
 
   const cleanCoupon = couponCode.trim();
 
-  // 3. VIP 专属券资格校验 (W04 卫语句提早返回)
+  // 4. VIP 专属券资格校验 (W04 卫语句提早返回)
   if (cleanCoupon.startsWith("VIP_") && vipTier === "STANDARD") {
     return {
       totalAmount,
@@ -60,25 +73,30 @@ export function computeCheckoutTotal(
     };
   }
 
-  // 4. 计算名义折扣
-  const rawDiscount = cleanCoupon.startsWith("VIP_")
-    ? Number((totalAmount * 0.2).toFixed(2))
-    : 10;
+  // 5. 在整数“分”级别计算名义折扣
+  const rawDiscountCents = cleanCoupon.startsWith("VIP_")
+    ? Math.round(totalCents * 0.2)
+    : 1000;
 
-  // 5. 账务一致性与最低支付额 0.01 元兜底 (严格维持 totalAmount === discount + finalPay)
-  let finalPay: number;
-  let actualDiscount: number;
+  // 6. 账务一致性与最低支付额 0.01 元 (1 分) 约束 (严格维持 totalAmount === discount + finalPay)
+  let discountCents: number;
+  let finalPayCents: number;
 
-  if (totalAmount <= MIN_PAY_AMOUNT) {
-    actualDiscount = 0;
-    finalPay = totalAmount;
+  if (totalCents <= MIN_PAY_CENTS) {
+    discountCents = 0;
+    finalPayCents = totalCents;
   } else {
-    const maxDiscountAllowed = Number((totalAmount - MIN_PAY_AMOUNT).toFixed(2));
-    actualDiscount = Number(Math.min(rawDiscount, maxDiscountAllowed).toFixed(2));
-    finalPay = Number((totalAmount - actualDiscount).toFixed(2));
+    const maxDiscountAllowedCents = totalCents - MIN_PAY_CENTS;
+    discountCents = Math.min(rawDiscountCents, maxDiscountAllowedCents);
+    finalPayCents = totalCents - discountCents;
   }
 
-  return { totalAmount, discount: actualDiscount, finalPay };
+  // 7. 转换回“元”输出
+  return {
+    totalAmount,
+    discount: Number((discountCents / 100).toFixed(2)),
+    finalPay: Number((finalPayCents / 100).toFixed(2))
+  };
 }
 ```
 
@@ -87,7 +105,8 @@ export function computeCheckoutTotal(
 - **测试 10**：验证拒绝 `0`, `-10`, `NaN`, `Infinity`, `-Infinity`，全部触发 `RangeError`；
 - **测试 11**：普通订单 `totalAmount = 50, coupon = "NORM_10"`，断言 `discount = 10, finalPay = 40`，严格满足 `50 === 10 + 40`；
 - **测试 12**：全额券 `totalAmount = 10, coupon = "NORM_10"`，受最低支付 0.01 约束，断言 `finalPay = 0.01, discount = 9.99`，严格满足 `10 === 9.99 + 0.01`；
-- **测试 13**：非 VIP 用户使用 VIP 券，断言 `discount = 0, finalPay = 100` 并提示 `couponError`。
+- **测试 13**：非 VIP 用户使用 VIP 券，断言 `discount = 0, finalPay = 100` 并提示 `couponError`；
+- **测试 14**：金额精度严格防御，验证对 `0.001`, `1.005`, `1.015`, `0.0001`, `99.999` 等超出 2 位小数的亚分金额全部抛出 `RangeError`，杜绝静默篡改。
 
 ### 4. React UI 状态机与安全文案示例（说明性参考）
 

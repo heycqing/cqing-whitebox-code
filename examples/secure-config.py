@@ -59,13 +59,8 @@ def load_tenant_config(config_dir: str | Path, tenant_id: str) -> Mapping[str, A
     target_file = (base_dir / f"{tenant_id}.json").resolve()
 
     # 2. 路径防越界二次防护断言
-    try:
-        if not target_file.is_relative_to(base_dir):
-            raise ValueError(f"Path traversal detected: {target_file} is outside {base_dir}")
-    except AttributeError:
-        # 兼容低于 Python 3.9 的旧标准库
-        if not str(target_file).startswith(str(base_dir)):
-            raise ValueError(f"Path traversal detected: {target_file} is outside {base_dir}")
+    if not target_file.is_relative_to(base_dir):
+        raise ValueError(f"Path traversal detected: {target_file} is outside {base_dir}")
 
     # 3. 文件存在性卫语句 (W04)
     if not target_file.is_file():

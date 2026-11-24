@@ -305,4 +305,15 @@ test("13. VIP 权限边界校验：非 VIP 用户使用 VIP 券拒绝抵扣", ()
   assert.strictEqual(resReject.totalAmount, Number((resReject.discount + resReject.finalPay).toFixed(2)));
 });
 
-console.log("✅ All 13 template, contract & checkout calculation tests passed successfully!");
+test("14. 结算金额精度防御：拒绝超过两位小数的金额 (如 0.001, 1.005, 1.015)", () => {
+  const invalidPrecisionAmounts = [0.001, 1.005, 1.015, 0.0001, 99.999];
+  for (const amt of invalidPrecisionAmounts) {
+    assert.throws(
+      () => computeCheckoutTotal(amt, "NORM_10", "STANDARD"),
+      (err) => err instanceof RangeError,
+      `Should reject amount with invalid sub-cent precision: ${amt}`
+    );
+  }
+});
+
+console.log("✅ All 14 template, contract & checkout calculation tests passed successfully!");

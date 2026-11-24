@@ -9,6 +9,7 @@
  * 3. 验证 typed-error-template.ts 的三层因果链保留（ES2022+ Error.cause）
  * 4. 验证 validate-links.mjs 的精准仓库相对路径解析（杜绝同名 README.md 混淆与错指漏检）
  * 5. 验证 rules / manifest 结构性模式约束验证器的有效性
+ * 6. 验证 examples/payment-checkout.ts 账务一致性与最低支付额规则
  */
 
 import assert from "node:assert/strict";
@@ -29,6 +30,10 @@ import {
   validateRulesStructure,
   validateManifestStructure
 } from "./validate-links.mjs";
+import {
+  computeCheckoutTotal,
+  MIN_PAY_AMOUNT
+} from "../examples/payment-checkout.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -188,7 +193,6 @@ await asyncTest("6. 强类型错误因果链保留：DAO -> Service 两层 cause
 test("7. Profile 路径对齐测试：精准识别错指或漏指的同名 README.md", () => {
   const fakeProfilePath = path.join(REPO_ROOT, "profiles", "fake-profile.md");
   
-  // 模拟一个 Markdown 文本：故意把 frameworks/react/README.md 漏掉，或者错指成 languages/typescript/README.md
   const mockContentWithMisdirection = `
 # Fake Profile
 - [Root README](../README.md)
@@ -199,7 +203,7 @@ test("7. Profile 路径对齐测试：精准识别错指或漏指的同名 READM
   const requiredFiles = [
     "README.md",
     "languages/typescript/README.md",
-    "frameworks/react/README.md" // 必须包含但 mock 中未链接它
+    "frameworks/react/README.md"
   ];
 
   const result = verifyProfileContentAgainstManifest(mockContentWithMisdirection, fakeProfilePath, requiredFiles, REPO_ROOT);
@@ -234,15 +238,71 @@ test("8. Profile 路径对齐测试：正确链接所有文件时通过验证", 
 // ==========================================
 
 test("9. Schema 校验器：拒绝不合法的 rules 与 manifest 结构", () => {
-  // 非法 rules 结构（缺少 required rules 字段）
   const invalidRules = { version: "1.0.0", description: "test" };
   const ruleErrors = validateRulesStructure(invalidRules);
   assert(ruleErrors.length > 0);
 
-  // 非法 manifest 结构（缺少 common 字段）
   const invalidManifest = { version: "1.0.0", description: "test" };
   const manifestErrors = validateManifestStructure(invalidManifest);
   assert(manifestErrors.length > 0);
 });
 
-console.log("✅ All 9 template & contract regression tests passed successfully!");
+// ==========================================
+// 5. 订单金额计算与账务一致性断言测试 (examples/payment-checkout.ts)
+// ==========================================
+
+test("10. 结算金额计算：严格拒绝非有限值、NaN 与非正金额", () => {
+  const invalidAmounts = [0, -10, NaN, Infinity, -Infinity];
+  for (const amt of invalidAmounts) {
+    assert.throws(
+      () => computeCheckoutTotal(amt, "COUPON", "STANDARD"),
+      (err) => err instanceof RangeError,
+      `Should reject invalid amount: ${amt}`
+    );
+  }
+});
+
+test("11. 普通订单结算与账务恒等式验证 (totalAmount === discount + finalPay)", () => {
+  // 无优惠券
+  const resNoCoupon = computeCheckoutTotal(150, "", "STANDARD");
+  assert.strictEqual(resNoCoupon.discount, 0);
+  assert.strictEqual(resNoCoupon.finalPay, 150);
+  assert.strictEqual(resNoCoupon.totalAmount, Number((resNoCoupon.discount + resNoCoupon.finalPay).toFixed(2)));
+
+  // 普通满减券 (抵扣 10 元)
+  const resStd = computeCheckoutTotal(50, "NORM_10", "STANDARD");
+  assert.strictEqual(resStd.discount, 10);
+  assert.strictEqual(resStd.finalPay, 40);
+  assert.strictEqual(resStd.totalAmount, Number((resStd.discount + resStd.finalPay).toFixed(2)));
+
+  // VIP 用户使用 VIP 20% 券
+  const resVip = computeCheckoutTotal(200, "VIP_SALE", "GOLD");
+  assert.strictEqual(resVip.discount, 40);
+  assert.strictEqual(resVip.finalPay, 160);
+  assert.strictEqual(resVip.totalAmount, Number((resVip.discount + resVip.finalPay).toFixed(2)));
+});
+
+test("12. 全额/超额券抵扣与 0.01 元最低支付额约束下的账务一致性", () => {
+  // 订单金额 10 元，优惠券抵扣 10 元。受 MIN_PAY_AMOUNT=0.01 约束，实付必须为 0.01，实际抵扣必须为 9.99
+  const resFull = computeCheckoutTotal(10, "NORM_10", "STANDARD");
+  assert.strictEqual(resFull.finalPay, MIN_PAY_AMOUNT, "Final pay must be exactly minimum 0.01");
+  assert.strictEqual(resFull.discount, 9.99, "Actual discount must adjust to totalAmount - 0.01");
+  // 验证账务恒等式
+  assert.strictEqual(resFull.totalAmount, Number((resFull.discount + resFull.finalPay).toFixed(2)));
+
+  // 极小订单金额 0.01 元
+  const resPenny = computeCheckoutTotal(0.01, "NORM_10", "STANDARD");
+  assert.strictEqual(resPenny.discount, 0);
+  assert.strictEqual(resPenny.finalPay, 0.01);
+  assert.strictEqual(resPenny.totalAmount, Number((resPenny.discount + resPenny.finalPay).toFixed(2)));
+});
+
+test("13. VIP 权限边界校验：非 VIP 用户使用 VIP 券拒绝抵扣", () => {
+  const resReject = computeCheckoutTotal(100, "VIP_SALE", "STANDARD");
+  assert.strictEqual(resReject.discount, 0);
+  assert.strictEqual(resReject.finalPay, 100);
+  assert(resReject.couponError && resReject.couponError.includes("VIP"));
+  assert.strictEqual(resReject.totalAmount, Number((resReject.discount + resReject.finalPay).toFixed(2)));
+});
+
+console.log("✅ All 13 template, contract & checkout calculation tests passed successfully!");
